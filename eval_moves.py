@@ -12,74 +12,92 @@ import os.path
 
 STOCKFISH_DIR = "/home/jtrigg/install/Stockfish/src/stockfish"
 INPUT_FILE = "/tmp/filtered_moves.csv"
-EVAL_FILE = "/tmp/evals.pkl"
+EVAL_FILE = "/home/jtrigg/files/misc/evals.pkl"
 
 def sigmoid(x):
   return 1 / (1 + math.exp(-x))
 
 class Evaluator:
-    def __init__(self):
-        super()
-        self.load_evals()
-        self.engine = chess.uci.popen_engine(STOCKFISH_DIR)
-        self.info_handler = chess.uci.InfoHandler()
-        self.engine.info_handlers.append(self.info_handler)
-    def evaluate(self, fen, time=100): #100 millis default time
-        board = chess.Board(fen)
-        zobrist_hash = chess.polyglot.zobrist_hash(board)
+  def __init__(self, eval_file=None):
+    super()
+    self.eval_file = eval_file if eval_file else EVAL_FILE
+    self.load_evals()
+    self.engine = chess.uci.popen_engine(STOCKFISH_DIR)
+    self.info_handler = chess.uci.InfoHandler()
+    self.engine.info_handlers.append(self.info_handler)
+  def evaluate_cp(self, fen, time=100, max_centipawns=10*100): #100 millis default time
+    move, (cp,mate) = self.memo_eval(fen, time)
+    return move, self.eval_to_centipawns(cp, mate)
+  def evaluate_ev(self, fen, time=100):
+    move, (cp, mate) = self.evaluate(fen, time)
+    return move, self.eval_to_ev(cp, mate)
+  def memo_eval(self, fen, time=100):
+    board = chess.Board(fen)
+    zobrist_hash = chess.polyglot.zobrist_hash(board)
 
-        #update
-        if not zobrist_hash in self.evals:
-            self.evals[zobrist_hash] = {"zobrist": zobrist_hash, "eval_time":0}
+    #update
+    if not zobrist_hash in self.evals:
+      self.evals[zobrist_hash] = {"zobrist": zobrist_hash, "eval_time":0}
 
-        eval_info = self.evals[zobrist_hash]
+    eval_info = self.evals[zobrist_hash]
 
-        if eval_info["eval_time"] == 0 and time <= 0:
-            raise
-        elif eval_info["eval_time"] == 0:
-            new_time = time
-            move, evaluation = self.raw_eval(fen, new_time)
-            eval_info["eval_time"] = new_time
-            eval_info["eval"] = evaluation
-            eval_info["move"] = move
-        elif time > eval_info["eval_time"]:
-            #round input time to a power of 2 times eval_info["eval_time"]
-            new_time = eval_info["eval_time"] * 2 ** math.ceil(math.log(time/eval_info["eval_time"]) / math.log(2))
-            move, evaluation = self.raw_eval(fen, new_time)
-            eval_info["eval_time"] = new_time
-            eval_info["eval"] = evaluation
-            eval_info["move"] = move
-        return eval_info["move"], eval_info["eval"]
-    def raw_eval(self, fen, time): #time in millis
-        #returns ev in terms of the side to play
-        board = chess.Board(fen)
-        self.engine.position(board)
-        engine_output = self.engine.go(movetime=time)  # Gets a tuple of bestmove and ponder move
-        score = self.info_handler.info["score"][1]
-        return str(engine_output.bestmove), self.eval_to_ev(score.cp, score.mate)
-
-    def eval_to_ev(self, centipawns, mate):
-        CAP_VAL = 10 * 100 #10+ pawns: huge advantage
-        SIGMOID_90_PERCENT = 2.19722457733
-        if centipawns is not None:
-            centipawns = max(centipawns, -1 * CAP_VAL)
-            centipawns = min(centipawns, CAP_VAL)
-            return sigmoid(SIGMOID_90_PERCENT * (centipawns / CAP_VAL))
-        elif mate == 0: #you are checkmated
-            return 0
-        elif mate > 0: #you have mate
-            return 0.9
-        elif mate < 0: #you're getting mated
-            return 0.1
-    def load_evals(self):
-        #self.evals: zobrist -> {zobrist, eval_time, eval}
-        if (os.path.isfile(EVAL_FILE)):
-            self.evals = pickle.load(open(EVAL_FILE, "rb" ))
-        else:
-            self.evals = {}
-    def save_evals(self):
-        #print(self.evals)
-        pickle.dump(self.evals, open(EVAL_FILE, "wb" ))
+    if eval_info["eval_time"] == 0 and time <= 0:
+      raise
+    elif eval_info["eval_time"] == 0:
+      new_time = time
+      move, evaluation = self.run_eval(fen, new_time)
+      eval_info["eval_time"] = new_time
+      eval_info["eval"] = evaluation
+      eval_info["move"] = move
+    elif time > eval_info["eval_time"]:
+      #round input time to a power of 2 times eval_info["eval_time"]
+      new_time = eval_info["eval_time"] * 2 ** math.ceil(math.log(time/eval_info["eval_time"]) / math.log(2))
+      move, evaluation = self.run_eval(fen, new_time)
+      eval_info["eval_time"] = new_time
+      eval_info["eval"] = evaluation
+      eval_info["move"] = move
+    return eval_info["move"], eval_info["eval"]
+  def run_eval(self, fen, time): #time in millis
+    #returns ev in terms of the side to play
+    board = chess.Board(fen)
+    self.engine.position(board)
+    engine_output = self.engine.go(movetime=time)  # Gets a tuple of bestmove and ponder move
+    score = self.info_handler.info["score"][1]
+    return str(engine_output.bestmove), (score.cp, score.mate)
+  def eval_to_centipawns(self, centipawns, mate):
+    CAP_VAL = 10 * 100 #10+ pawns: huge advantage
+    if centipawns is not None:
+      centipawns = max(centipawns, -1 * CAP_VAL)
+      centipawns = min(centipawns, CAP_VAL)
+      return centipawns
+    elif mate == 0: #you are checkmated
+      return -1 * CAP_VAL
+    elif mate > 0: #you have mate
+      return CAP_VAL
+    elif mate < 0: #you're getting mated
+      return -1 * CAP_VAL
+  def eval_to_ev(self, centipawns, mate):
+    CAP_VAL = 10 * 100 #10+ pawns: huge advantage
+    SIGMOID_90_PERCENT = 2.19722457733
+    if centipawns is not None:
+      centipawns = max(centipawns, -1 * CAP_VAL)
+      centipawns = min(centipawns, CAP_VAL)
+      return sigmoid(SIGMOID_90_PERCENT * (centipawns / CAP_VAL))
+    elif mate == 0: #you are checkmated
+      return 0
+    elif mate > 0: #you have mate
+      return 0.9
+    elif mate < 0: #you're getting mated
+      return 0.1
+  def load_evals(self):
+    #self.evals: zobrist -> {zobrist, eval_time, eval}
+    if (os.path.isfile(self.eval_file)):
+      self.evals = pickle.load(open(self.eval_file, "rb" ))
+    else:
+      self.evals = {}
+  def save_evals(self):
+    #print(self.evals)
+    pickle.dump(self.evals, open(self.eval_file, "wb" ))
 
 
 def hash_fen(fen):
@@ -90,6 +108,12 @@ def fen_plus_move(fen, move):
   #return fen
   board = chess.Board(fen)
   board.push(chess.Move.from_uci(move))
+  return board.fen()
+
+def move_history_to_fen(move_history):
+  board = chess.Board()
+  for move in eval(move_history):
+    board.push(chess.Move.from_uci(move))
   return board.fen()
 
 if __name__ == "__main__":

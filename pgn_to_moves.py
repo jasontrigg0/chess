@@ -4,39 +4,65 @@ import chess.uci
 import chess.pgn
 import chess.polyglot
 import csv
+import random
 
 #Read in a pgn list of games and generate a csv of moves
 
-PGN_FILE = "/home/jtrigg/Downloads/lichess_db_standard_rated_2018-10.pgn"
+#PGN_FILE = "/home/jtrigg/Downloads/lichess_db_standard_rated_2018-10.pgn"
+PGN_FILE = "/home/jtrigg/files/misc/KingBase2018-all.pgn"
+#PGN_FILE = "/tmp/kingbase1pct.pgn"
 CEREBELLUM_FILE = "/home/jtrigg/Downloads/Cerebellum_light_180611/Cerebellum_Light_Poly.bin"
 
-if __name__ == "__main__":
-    pgn = open(PGN_FILE)
+MAX_GAME_CNT = 10000000
+GAME_FRAC = 0.03
+MOVE_FRAC = 0.03
 
-    OUTPUT_FILE = "/tmp/moves.csv"
+class Game():
+    def __init__(self, game):
+        self.game = game
+    def headers(self):
+        return self.game.headers
+    def moves(self):
+        board = self.game.board()
+        move_history = []
+        for move in self.game.mainline_moves():
+            start_position = board.fen()
+            info = {"white_elo": self.game.headers["WhiteElo"], "black_elo": self.game.headers["BlackElo"], "result": self.game.headers["Result"], "move_history": str(move_history), "turn": "white" if board.turn else "black", "fen":start_position, "move":str(move)}
+            if random.random() < MOVE_FRAC:
+                yield info
+            #update with new move
+            board.push(move)
+            move_history.append(str(move))
+
+def pgn_to_games(pgn_file=PGN_FILE):
+    pgn = open(pgn_file, errors="replace")
+    for i in range(MAX_GAME_CNT):
+        game = chess.pgn.read_game(pgn)
+        #if not (int(game.headers["WhiteElo"]) > 2600 or int(game.headers["BlackElo"]) > 2600):
+        #    continue
+        event_name = game.headers["Event"].lower()
+        if "rapid" in event_name or "blitz" in event_name or "speed" in event_name:
+            continue
+        if not game:
+            break
+        if random.random() > GAME_FRAC: #skip the game
+            continue
+        yield Game(game)
+
+if __name__ == "__main__":
+    OUTPUT_FILE = "/tmp/moves_test.csv"
     with open(OUTPUT_FILE, 'w') as csvfile:
-        fieldnames = ["zobrist", "start_fen", "previous_moves", "move"]
+        fieldnames = ["white_elo", "black_elo", "result", "fen", "move_history", "move"]
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
 
-        GAME_CNT = 50000
         #100 games -> 6620 distinct positions
         #1000 games -> 64012 distinct positions
         #10000 games -> 610650 distinct positions
-        for i in range(GAME_CNT):
-            next_game = chess.pgn.read_game(pgn)
-            #print(next_game)
-            #print(next_game.headers)
-            fields = ["TimeControl", "WhiteElo", "BlackElo", "Move"]
-            board = next_game.board()
-            previous_moves = []
-            for move in next_game.mainline_moves():
-                start_position = board.fen()
-                zobrist_position = chess.polyglot.zobrist_hash(board)
-                board.push(move)
-                writer.writerow({"zobrist":zobrist_position, "previous_moves": str(previous_moves), "start_fen":start_position, "move":move})
-
-                previous_moves.append(str(move))
+        for game in pgn_to_games(PGN_FILE):
+            for move in game.moves():
+                outrow = {x:move[x] for x in fieldnames}
+                writer.writerow(outrow)
 
     # not using cerebellum at the moment:
 

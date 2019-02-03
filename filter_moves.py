@@ -13,14 +13,14 @@ if __name__ == "__main__":
     with open("/tmp/moves.csv") as csvfile:
         reader = csv.DictReader(csvfile)
         for row in reader:
-            cnts[row["zobrist"]] = cnts.setdefault(row["zobrist"],0) + 1
+            cnts[row["move_history"]] = cnts.setdefault(row["move_history"],0) + 1
 
     with open("/tmp/filtered_moves.csv", 'w') as csvfile:
-        fieldnames = ["zobrist", "start_fen", "previous_moves", "move"]
+        fieldnames = ["start_fen", "move_history", "move"]
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
         with open("/tmp/moves.csv") as csvfile:
             reader = csv.DictReader(csvfile)
             for row in reader:
-                if cnts[row["zobrist"]] >= MIN_CNT:
-                    writer.writerow({"zobrist":row["zobrist"], "start_fen":row["start_fen"], "previous_moves": row["previous_moves"], "move":row["move"]})
+                if cnts[row["move_history"]] >= MIN_CNT:
+                    writer.writerow({"start_fen":row["start_fen"], "move_history": row["move_history"], "move":row["move"]})

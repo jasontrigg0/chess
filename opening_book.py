@@ -8,17 +8,17 @@
 #on stockfish evals
 
 
-from eval_moves import Evaluator, hash_fen, fen_plus_move
+from eval_moves import Evaluator, hash_fen, fen_plus_move, move_history_to_fen
 import csv
 from jtutils import pairwise
 
 
+#TODO: avoid infinite loop in the case of repeated positions
 
 #read the graph of positions, along with the ev
 EVALUATOR = Evaluator()
 
 INPUT_FILE = "/tmp/filtered_moves.csv"
-START_ZOBRIST = 5060803636482931868
 EVAL_TIME = 1000
 
 def add_marginal_evs(starting_ev, info):
@@ -128,14 +128,15 @@ def aggregate_random_books(n, positions, probs, books):
 class GameNode:
     def __init__(self, val):
         super()
-        self.val = val
+        self.val = val #fen
         #must run set_info before using the node
         self.children = None
         self.moves = None #names of edges from this node to children
         self.probs = None #probabilities from this node to children
+        self.cnts = None
     def is_leaf(self):
         return len(self.children) == 0
-    def set_info(self, children, moves, probs):
+    def set_info(self, children, moves, probs, total_cnt):
         self.children = children
         self.moves = moves
         self.probs = probs
@@ -149,47 +150,44 @@ class GameNode:
     def __str__(self):
         return str(self.val) + '\n' + str(self.moves) + '\n' + str(self.probs)
 
-def generate_position_graph():
-    positions = {} #zobrist -> {fen, previous_moves, move_cnts:{move: cnt}}
+def generate_position_stats():
+    positions = {} #move_history -> {fen, move_cnts:{move: cnt}, total_cnt}
 
     #position info
     with open(INPUT_FILE) as csvfile:
         reader = csv.DictReader(csvfile)
         for row in list(reader):
-            zobrist = hash_fen(row["start_fen"])
-            default = {"fen": row["start_fen"], "previous_moves": row["previous_moves"], "move_cnts":{}, "probs":{}}
-            info = positions.setdefault(zobrist,default)
+            default = {"fen": row["start_fen"], "move_cnts":{}, "probs":{}, "move_history":row["move_history"]}
+            info = positions.setdefault(row["start_fen"],default)
             info["move_cnts"][row["move"]] = info["move_cnts"].setdefault(row["move"],0) + 1
 
             #set child info if not set
             child_fen = fen_plus_move(row["start_fen"], row["move"])
-            child_zobrist = hash_fen(child_fen)
-            full_move_list = str(eval(row["previous_moves"]) + [row["move"]])
-            default = {"fen": child_fen, "previous_moves": full_move_list, "move_cnts":{}, "probs":{}}
-            positions.setdefault(child_zobrist,default)
+            full_move_list = str(eval(row["move_history"]) + [row["move"]])
+            default = {"fen": child_fen, "move_cnts":{}, "probs":{}, "move_history":full_move_list}
+            positions.setdefault(child_fen,default)
 
             #set best move info if not set
             best_move = EVALUATOR.evaluate(row["start_fen"], EVAL_TIME)[0]
             best_move_fen = fen_plus_move(row["start_fen"], best_move)
-            best_move_zobrist = hash_fen(best_move_fen)
-            full_move_list = str(eval(row["previous_moves"]) + [best_move])
-            default = {"fen": best_move_fen, "previous_moves": full_move_list, "move_cnts":{}, "probs":{}}
-            positions.setdefault(best_move_zobrist, default)
+            full_move_list = str(eval(row["move_history"]) + [best_move])
+            default = {"fen": best_move_fen, "move_cnts":{}, "probs":{}, "move_history":full_move_list}
+            positions.setdefault(best_move_fen, default)
 
 
     #warn if any positions have >0 and <20 moves --
     #this small n can ruin the data:
     #eg: make sure to play move X, which leads to a single game where the opponent
     #blunders their queen a few moves down the line
-    for zobrist in positions:
-        if sum(positions[zobrist]["move_cnts"].values()) > 0 and sum(positions[zobrist]["move_cnts"].values()) < 20:
+    for fen in positions:
+        if sum(positions[fen]["move_cnts"].values()) > 0 and sum(positions[fen]["move_cnts"].values()) < 20:
             print('WARNING: positions with limited move counts')
-            print(positions[zobrist]["previous_moves"])
-            print(sum(positions[zobrist]["move_cnts"].values()))
+            print(positions[fen]["move_history"])
+            print(sum(positions[fen]["move_cnts"].values()))
 
     #compute move probabilities (these are the edge weights)
-    for zobrist in positions:
-        info = positions[zobrist]
+    for fen in positions:
+        info = positions[fen]
         fen = info["fen"]
 
         #set counts
@@ -197,25 +195,29 @@ def generate_position_graph():
         for move in info["move_cnts"]:
             total_cnt += info["move_cnts"][move]
 
+        #set probs
         for move in info["move_cnts"]:
             child_fen = fen_plus_move(fen, move)
-            child_zobrist = hash_fen(child_fen)
             info["probs"][move] = info["move_cnts"][move] / total_cnt
 
+        #set total cnt
+        info["total_cnt"] = total_cnt
 
         #add best_move as an edge with weight 0
         if total_cnt > 0: #skip this step for leaf nodes
             best_move = EVALUATOR.evaluate(fen, EVAL_TIME)[0]
             info["probs"].setdefault(best_move,0)
+    return positions
 
+def generate_game_tree(positions):
     #generate basic nodes for each position
-    nodes = {} #zobrist -> node
-    for zobrist in positions:
-        nodes[zobrist] = GameNode(positions[zobrist]["fen"])
+    nodes = {} #move_history -> node
+    for fen in positions:
+        nodes[fen] = GameNode(positions[fen]["fen"])
 
     #create graph by fully initializing node information
-    for zobrist in nodes:
-        info = positions[zobrist]
+    for fen in nodes:
+        info = positions[fen]
         fen = info["fen"]
 
         children = []
@@ -223,56 +225,70 @@ def generate_position_graph():
         probs = {}
 
         #set children, probs, moves
-        for move in positions[zobrist]["probs"]:
+        for move in positions[fen]["probs"]:
             child_fen = fen_plus_move(fen, move)
-            child_zobrist = hash_fen(child_fen)
-            child_node = nodes[child_zobrist]
+            full_move_list = str(eval(positions[fen]["move_history"]) + [move])
+            child_node = nodes[child_fen]
 
             children.append(child_node)
             moves[child_node] = move
-            probs[child_node] = positions[zobrist]["probs"][move]
+            probs[child_node] = positions[fen]["probs"][move]
 
-        nodes[zobrist].set_info(children, moves, probs)
-        nodes[zobrist].previous_moves = eval(positions[zobrist]["previous_moves"])
+        nodes[fen].set_info(children, moves, probs, info["total_cnt"])
 
-    for zobrist in nodes:
-        pos = nodes[zobrist]
+    for fen in nodes:
+        pos = nodes[fen]
         sets = []
         sets.append(set(['e2e4', 'e7e5', 'f1c4', 'g8f6', 'd1f3']))
         sets.append(set(['e2e4', 'e7e5', 'f1c4', 'g8f6', 'd1f3', 'b8c6']))
         for s in sets:
-            if set(pos.previous_moves) == s:
+            if set(positions[fen]["move_history"]) == s:
                 print('evaluations')
-                print(pos.previous_moves)
+                print()
                 ev = 0
                 for c in pos.children:
                     ev += pos.probs[c] * EVALUATOR.evaluate(c.val, EVAL_TIME)[1]
                     print(pos.moves[c], pos.probs[c], EVALUATOR.evaluate(c.val, EVAL_TIME)[1])
                 print(ev)
 
-    return nodes[START_ZOBRIST]
+    return nodes
 
-def print_book(book):
+def print_book(book, positions):
     print(book["starting_ev"])
     #note: the best book might not be the one with the most moves!
     #TODO: throw out all too-large books
     #TODO: figure out how to augment the game tree such that more
     #      moves is always better
+    for i,x in enumerate(book["info"]):
+        if x["marginal_ev"] <= 0:
+            break
+        print(i+1,x["total_ev"] - book["starting_ev"])
     best_book = max(book["info"], key = lambda x: x["total_ev"])
+    print(best_book["total_ev"])
     print('move cnt:' + str(len(best_book["moves"])))
     for m in sorted(best_book["moves"], key=lambda x: x[0]):
         print(m)
+        fen = move_history_to_fen(str(m[0]))
+        print(positions[fen]["move_cnts"])
+        print(positions[fen]["total_cnt"])
 
 if __name__ == "__main__":
-    root_node = generate_position_graph()
+    positions = generate_position_stats()
+    nodes = generate_game_tree(positions)
+
+    starting_fen = move_history_to_fen(str([]))
+    root_node = nodes[starting_fen]
+    start_node = nodes[starting_fen] #['d2d4','d7d5','g1f3'])]
+
     move_cnt = 200
 
     print("white")
-    book = compute_p1_book(root_node, [], move_cnt)
-    print_book(book)
+    book = compute_p1_book(start_node, [], move_cnt)
+    print_book(book, positions)
 
     print("black")
     book = compute_p2_book(root_node, [], move_cnt)
-    print_book(book)
+    print_book(book, positions)
 
+    #TODO: print the node count of the last move in the tree
     EVALUATOR.save_evals()
