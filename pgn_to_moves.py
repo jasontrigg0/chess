@@ -14,8 +14,8 @@ PGN_FILE = "/home/jtrigg/files/misc/KingBase2018-all.pgn"
 CEREBELLUM_FILE = "/home/jtrigg/Downloads/Cerebellum_light_180611/Cerebellum_Light_Poly.bin"
 
 MAX_GAME_CNT = 10000000
-GAME_FRAC = 0.03
-MOVE_FRAC = 0.03
+GAME_FRAC = 1 #0.03
+MOVE_FRAC = 1 #0.03
 
 class Game():
     def __init__(self, game):
@@ -34,17 +34,17 @@ class Game():
             board.push(move)
             move_history.append(str(move))
 
-def pgn_to_games(pgn_file=PGN_FILE):
+def pgn_to_games(pgn_file=PGN_FILE, high_elo=False):
     pgn = open(pgn_file, errors="replace")
     for i in range(MAX_GAME_CNT):
         game = chess.pgn.read_game(pgn)
-        #if not (int(game.headers["WhiteElo"]) > 2600 or int(game.headers["BlackElo"]) > 2600):
-        #    continue
+        if not game:
+            break
+        if high_elo and not (int(game.headers["WhiteElo"]) > 2600 or int(game.headers["BlackElo"]) > 2600):
+           continue
         event_name = game.headers["Event"].lower()
         if "rapid" in event_name or "blitz" in event_name or "speed" in event_name:
             continue
-        if not game:
-            break
         if random.random() > GAME_FRAC: #skip the game
             continue
         yield Game(game)

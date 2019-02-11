@@ -25,17 +25,32 @@ def compute_loss(fen, move, eval_time_millis = 100):
     return -1 * best_eval, -1 * (best_eval - observed_eval)
 
 
+EVAL_DEPTHS = [0,1,2,4,8]
+
+def compute_all_features(position, move):
+    features = {}
+    eval_, loss = compute_loss(position, move, 100)
+    features["eval"] = eval_
+    features["loss"] = loss
+
+    for depth in EVAL_DEPTHS:
+        best_move_at_depth, _ = ev.evaluate_depth(position,depth)
+        _, features["loss_"+str(depth)] = compute_loss(position, best_move_at_depth, 100)
+    return features
+
+
 if __name__ == "__main__":
     fout = open(OUTPUT_FILE,'w')
     input_field_names = ['position','move','elo', 'opp_elo','result']
     output_field_names = input_field_names + ['eval', 'loss']
+
+    output_field_names += ['loss_'+str(i) for i in EVAL_DEPTHS]
+
     writer = csv.DictWriter(fout, fieldnames = output_field_names)
     writer.writeheader()
 
     with open(INPUT_FILE) as fin:
         reader = csv.DictReader(fin)
-        for row in reader:
-            eval_, loss = compute_loss(row["position"], row["move"], 100)
-            row["eval"] = eval_
-            row["loss"] = loss
-            writer.writerow(row)
+        for input_row in reader:
+            features = compute_all_features(input_row["position"], input_row["move"])
+            writer.writerow({**features, **input_row})

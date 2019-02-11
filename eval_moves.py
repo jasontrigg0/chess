@@ -1,6 +1,7 @@
 import chess
 import chess.uci
 import chess.polyglot
+import chess.engine
 import pickle
 import csv
 import math
@@ -25,11 +26,18 @@ class Evaluator:
     self.engine = chess.uci.popen_engine(STOCKFISH_DIR)
     self.info_handler = chess.uci.InfoHandler()
     self.engine.info_handlers.append(self.info_handler)
+  def evaluate_depth(self, fen, depth):
+    #won't be saved
+    board = chess.Board(fen)
+    self.engine.position(board)
+    engine_output = self.engine.go(depth=depth) # Gets a tuple of bestmove and ponder move
+    score = self.info_handler.info["score"][1]
+    return str(engine_output.bestmove), self.eval_to_centipawns(score.cp, score.mate)
   def evaluate_cp(self, fen, time=100, max_centipawns=10*100): #100 millis default time
     move, (cp,mate) = self.memo_eval(fen, time)
     return move, self.eval_to_centipawns(cp, mate)
   def evaluate_ev(self, fen, time=100):
-    move, (cp, mate) = self.evaluate(fen, time)
+    move, (cp, mate) = self.memo_eval(fen, time)
     return move, self.eval_to_ev(cp, mate)
   def memo_eval(self, fen, time=100):
     board = chess.Board(fen)
