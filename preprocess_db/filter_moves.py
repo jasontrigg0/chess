@@ -4,7 +4,7 @@ import csv
 #a minimum number of occurrences
 
 if __name__ == "__main__":
-    #filter to have only the zobrist hashs with a minimum frequency
+    #filter to have only the move histories with a minimum frequency (TODO: use zobrist hashes instead)
     MIN_CNT = 20
 
     cnts = {}
@@ -23,4 +23,4 @@ if __name__ == "__main__":
             reader = csv.DictReader(csvfile)
             for row in reader:
                 if cnts[row["move_history"]] >= MIN_CNT:
-                    writer.writerow({"start_fen":row["start_fen"], "move_history": row["move_history"], "move":row["move"]})
+                    writer.writerow({"start_fen":row["fen"], "move_history": row["move_history"], "move":row["move"]})
