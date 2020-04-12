@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Chess</title>
+    <link rel="stylesheet" href="css/chessboard-1.0.0.min.css">
+    <script src="https://code.jquery.com/jquery-1.12.4.min.js"></script>
+    <script src="js/chessboard-1.0.0.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.2/chess.js"></script>
+    <script src="js/opening_book.js"></script>
+  </head>
+  <body>
+    <div>
+      <div>
+       <input type="radio" id="white" name="color" value="white" onclick='setSide()' checked="checked">
+       <label for="white">White</label><br>
+       <input type="radio" id="black" name="color" value="black" onclick='setSide()'>
+       <label for="black">Black</label><br>
+      </div>
+      <div>
+         <button onclick="resetBoard()">Reset</button>
+      </div>
+      <div>
+        <span id="fen"></span>
+      </div>
+      <div>
+        <span id="value"></span>
+      </div>
+      <div id="myBoard" style="width: 400px"></div>
+    </div>
+    <script>
+     // https://chessboardjs.com/examples#5001
+     var board = null
+     var game = null
+     var side = null //side of the human player
+
+     function setSide() {
+       color = document.querySelector('input[name="color"]:checked').value;
+       var flip = board.orientation() !== color;
+       board.orientation(color);
+       wakeComputer();
+     }
+
+     function takeBack() {
+       //takeback two moves
+       if (board.orientation()[0] === game.turn()) { //human's turn
+         game.undo();
+       }
+       game.undo();
+       board.position(game.fen())
+       printFen();
+       window.setTimeout(wakeComputer, 400)
+     }
+
+     function onDragStart (source, piece, position, orientation) {
+       // do not pick up pieces if the game is over
+       if (game.game_over()) return false
+
+       // only pick up pieces for White
+       if (side === "white") {
+         if (piece.search(/^b/) !== -1) return false
+       } else if (side === "black") {
+         if (piece.search(/^w/) !== -1) return false
+       }
+     }
+
+     function wakeComputer() {
+       if (board.orientation()[0] !== game.turn()) { //not human's turn
+         makeComputerMove();
+       }
+     }
+
+     function makeComputerMove() {
+       // makeRandomMove();
+       makeOpeningBookMove();
+       board.position(game.fen())
+       printFen();
+     }
+
+     function makeRandomMove () {
+       var possibleMoves = game.moves()
+
+       // game over
+       if (possibleMoves.length === 0) return
+
+       var randomIdx = Math.floor(Math.random() * possibleMoves.length)
+       alert(possibleMoves[randomIdx]);
+       game.move(possibleMoves[randomIdx])
+     }
+
+     function makeOpeningBookMove() {
+       let fen = game.fen();
+
+       //drop en passant info because the opening book doesn't have it
+       //TODO: fix this
+       let fenPieces = fen.split(" ");
+       fenPieces[3] = "-";
+
+       //drop 50 move count info because the opening book doesn't have it
+       fenPieces[4] = "-";
+
+       fen = fenPieces.join(" ");
+
+       if (fen in OPENING_BOOK) {
+         let move = OPENING_BOOK[fen]["move"];
+         printValue(OPENING_BOOK[fen]["value"]);
+         game.move(move, {sloppy: true});
+         // game.move({from: move.slice(0,2), to: move.slice(2,2)});
+       } else {
+         return;
+       }
+     }
+
+     function onDrop (source, target) {
+       // see if the move is legal
+       var move = game.move({
+         from: source,
+         to: target,
+         promotion: 'q' // NOTE: always promote to a queen for example simplicity
+       })
+
+       // illegal move
+       if (move === null) return 'snapback'
+
+       // make random legal move for black
+       window.setTimeout(wakeComputer, 250)
+     }
+
+     // update the board position after the piece snap
+     // for castling, en passant, pawn promotion
+     function onSnapEnd () {
+       board.position(game.fen())
+     }
+
+     function printFen() {
+       document.getElementById('fen').innerHTML = game.fen();
+     }
+
+     function printValue(val) {
+       document.getElementById('value').innerHTML = val;
+     }
+
+     function resetBoard() {
+       game = new Chess()
+       printFen();
+
+       var config = {
+         draggable: true,
+         position: 'start',
+         onDragStart: onDragStart,
+         onDrop: onDrop,
+         onSnapEnd: onSnapEnd
+       }
+       board = Chessboard('myBoard', config)
+       setSide(); //flip board and computer move if necessary
+     }
+
+     function addListeners() {
+       document.onkeydown = checkKey;
+       function checkKey(e) {
+         e = e || window.event;
+         if (e.keyCode == '37') {
+           takeBack(); //left arrow
+         }
+         else if (e.keyCode == '39') {
+           // right arrow
+         }
+       }
+     }
+     addListeners();
+     resetBoard();
+    </script>
+  </body>
+</html>
