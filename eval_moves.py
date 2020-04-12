@@ -6,12 +6,13 @@ import pickle
 import csv
 import math
 import os.path
+import random
 
 #Given an input of a number of games, sum across all positions
 #which positions had the most "loss" (ie players lost the most EV
 #in this positions)
 
-STOCKFISH_DIR = "/home/jtrigg/install/Stockfish/src/stockfish"
+STOCKFISH_BINARY = "/home/jtrigg/install/Stockfish/src/stockfish"
 INPUT_FILE = "/tmp/filtered_moves.csv"
 EVAL_FILE = "/home/jtrigg/files/misc/evals.pkl"
 
@@ -23,7 +24,23 @@ class Evaluator:
     super()
     self.eval_file = eval_file if eval_file else EVAL_FILE
     self.load_evals()
-    self.engine = chess.uci.popen_engine(STOCKFISH_DIR)
+    self.engine = chess.uci.popen_engine(STOCKFISH_BINARY)
+    self.engine.uci()
+    #TODO: may want to rerun with Dynamic Contempt off
+    #there's an interpretation that Dynamic Contempt is a measure of tempo
+    #ie how valuable is it to have the move right now, in which case it should
+    #stay in. The true test is how stable the evaluation is
+    #ie if running from startpos shows bestmove is X and eval is Y
+    #then if we make move X and evaluate again the eval should still be Y (on average)
+    #from a tiny bit of testing I can't tell whether dynamic contempt on or off is
+    #better in this regard, so leaving it on for now
+
+    #Uncomment this to  turn off dynamic contempt
+    # self.engine.setoption({"Contempt":0, "Dynamic Contempt": "Off"})
+
+    #Set contempt to 0
+    self.engine.setoption({"Contempt":0})
+
     self.info_handler = chess.uci.InfoHandler()
     self.engine.info_handlers.append(self.info_handler)
   def evaluate_depth(self, fen, depth):
@@ -39,12 +56,20 @@ class Evaluator:
   def evaluate_ev(self, fen, time=100):
     move, (cp, mate) = self.memo_eval(fen, time)
     return move, self.eval_to_ev(cp, mate)
+  def get_eval_time(self, fen):
+    #get the amount of time that this position has been evaluated
+    board = chess.Board(fen)
+    zobrist_hash = chess.polyglot.zobrist_hash(board)
+    eval_info = self.evals[zobrist_hash]
+    return eval_info["eval_time"]
   def memo_eval(self, fen, time=100):
     board = chess.Board(fen)
     zobrist_hash = chess.polyglot.zobrist_hash(board)
 
     #update
     if not zobrist_hash in self.evals:
+      if random.random() < 0.0001: #save once every 10k new evaluations
+        self.save_evals()
       self.evals[zobrist_hash] = {"zobrist": zobrist_hash, "eval_time":0}
 
     eval_info = self.evals[zobrist_hash]
