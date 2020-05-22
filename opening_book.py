@@ -25,6 +25,7 @@ import itertools
 import time
 import shelve
 import os
+import random
 
 #read the graph of positions, along with the ev
 EVALUATOR = Evaluator()
@@ -32,28 +33,30 @@ EVALUATOR = Evaluator()
 INPUT_FILE = "/ssd/files/chess/filtered_moves.csv"
 EVAL_TIME = 1000
 
-P1_CACHE = {}
-P2_CACHE = {}
+CACHE_STATS = {}
 
-P1_CACHE_STATS = {}
-P2_CACHE_STATS = {}
+MAX_CACHED_MOVES = 1000 * 30000 #30000 superbooks of size 1000
 
-CACHE_STATS_THRESHOLD = 1000000
-
-MAX_CACHED_MOVES = 1000 * 500 #500 superbooks of size 1000 (for each of p1 and p2)
-
-DISK_CACHE_THRESHOLD = 100
+DISK_CACHE_THRESHOLD = 20 # * 1000000
+CACHE_STATS_THRESHOLD = 20 # * 1000000
 
 class SuperbookCache():
     def __init__(self):
+        self.cnt = 0
         filename = "/tmp/shelve"
         if os.path.exists(filename):
             os.remove(filename)
         self.shelf = shelve.open(filename)
     def save_cache(self, fen, n, player, superbook):
+        if str((fen, n, player)) not in self.shelf:
+            self.cnt += 1
         self.shelf[str((fen, n, player))] = superbook
     def load_cache(self, fen, n, player):
         return self.shelf[str((fen, n, player))]
+    def evict(self, fen, n, player):
+        if str((fen, n, player)) in self.shelf:
+            self.cnt -= 1
+        del self.shelf[str((fen, n, player))]
     def in_cache(self, fen, n, player):
         return str((fen, n, player)) in self.shelf
 
@@ -163,7 +166,6 @@ def compute_p1_book(pos, n, optimism=0):
 
     #TODO: replace all this with a cache singleton
     global LEAF_COUNT
-    global P1_CACHE
 
 
     if pos.total_cnt > DISK_CACHE_THRESHOLD:
@@ -236,6 +238,8 @@ def compute_p1_book(pos, n, optimism=0):
     # choose_superbook.add_book(1, OpeningBook([best_move]), best_child_ev)
 
     for k, all_books in enumerate(itertools.zip_longest(*[superbooks[c].get_all_books() for c in pos.children])):
+        #choose_superbook has 1 move from before the loop: only add up to n-1 additional moves
+        if k > n-2: break
         child_to_book = {c:book for c,book in zip(pos.children, all_books)}
         options = [c for c in child_to_book if child_to_book[c] is not None]
         if len(options) == 0: continue
@@ -355,10 +359,24 @@ def compute_p1_book(pos, n, optimism=0):
     #         P1_CACHE[(pos.val,n)] = superbook
 
 
-    if pos.total_cnt > DISK_CACHE_THRESHOLD:
+    if pos.total_cnt >= DISK_CACHE_THRESHOLD:
         disk_cache.save_cache(pos.val, n, 1, superbook)
 
+    if pos.total_cnt >= CACHE_STATS_THRESHOLD:
+        info = CACHE_STATS.setdefault((pos.val, n, 1),{})
+        info["cnt"] = info.get("cnt",0) + 1
+        info["last_leaf"] = LEAF_COUNT
+        info["pos_cnt"] = pos.total_cnt
 
+
+    if disk_cache.cnt * n > MAX_CACHED_MOVES:
+        #purge 10% of the cache
+        cache_score = lambda x: CACHE_STATS[x]["pos_cnt"] * (1 / (math.log(2 + LEAF_COUNT - CACHE_STATS[x]["last_leaf"]))) * (CACHE_STATS[x]["cnt"] / (LEAF_COUNT+1))
+        cache_keys = [eval(x) for x in disk_cache.shelf.keys()]
+        values = sorted(cache_keys, key = cache_score, reverse=True)
+        to_evict = values[round(0.9 * disk_cache.cnt):]
+        for (fen, n, player) in to_evict:
+            disk_cache.evict(fen, n, player)
 
     # if pos.total_cnt > CACHE_STATS_THRESHOLD:
     #     P1_CACHE[(pos.val,n)] = superbook
@@ -379,10 +397,9 @@ def compute_p2_book(pos, n, optimism=0):
     global LEAF_COUNT
     global P2_CACHE
 
-    if pos.total_cnt > DISK_CACHE_THRESHOLD:
+    if pos.total_cnt >= DISK_CACHE_THRESHOLD:
         if disk_cache.in_cache(pos.val, n, 2):
             return disk_cache.load_cache(pos.val, n, 2)
-
 
     # if pos.total_cnt > CACHE_STATS_THRESHOLD:
     #     #update cache stats
@@ -422,8 +439,14 @@ def compute_p2_book(pos, n, optimism=0):
     #         P2_CACHE[(pos.val,n)] = superbook
 
 
-    if pos.total_cnt > DISK_CACHE_THRESHOLD:
+    if pos.total_cnt >= DISK_CACHE_THRESHOLD:
         disk_cache.save_cache(pos.val, n, 2, superbook)
+
+    if pos.total_cnt >= CACHE_STATS_THRESHOLD:
+        info = CACHE_STATS.setdefault((pos.val, n, 2),{})
+        info["cnt"] = info.get("cnt",0) + 1
+        info["last_leaf"] = LEAF_COUNT
+        info["pos_cnt"] = pos.total_cnt
 
     # if pos.total_cnt > CACHE_STATS_THRESHOLD:
     #     P2_CACHE[(pos.val,n)] = superbook
@@ -447,6 +470,30 @@ def aggregate_random_books(n, positions, probs, superbooks):
     #initialize to all zeroes
     cnts = {p:0 for p in positions}
 
+    # if positions and int(positions[0].val.split()[-1]) <= 3:
+    #     print("printing aggs")
+    #     print([p.val for p in positions])
+
+    #0.5282897987306038
+    #0.0036 * math.log(x+1)
+    #debug_move = ('rnbqkb1r/pppppppp/5n2/8/3P4/8/PPP1PPPP/RNBQKBNR w KQkq - - 2', 'c2c4', 0.5375091772533165)
+    #0.5365791050653824
+
+    # debug_move = ('rn1q1rk1/4bppp/p2pbn2/1p2p3/4P3/1NN1BP2/PPPQ2PP/2KR1B1R w - - - 11', 'move_9', 0.5163221026503005)
+    debug_move = ('rn1q1rk1/4bppp/p2pbn2/1p2p3/4P3/1NN1BP2/PPPQ2PP/2KR1B1R w - - - 1111', 'move_9', 0.5163221026503005) #placeholder
+    #debug_child_pos = 'rnbqkb1r/pp1n1ppp/4p3/2ppP3/3P1P2/8/PPP1N1PP/R1BQKBNR b KQkq - - 6' #'rnbqkb1r/ppp2ppp/4pn2/3p2B1/3PP3/2N5/PPP2PPP/R2QKBNR b KQkq - - 4'
+    debug_child_pos = 'r1bqkb1r/pp1n1ppp/2n1p3/2ppP3/3P1P2/5N2/PPP1N1PP/R1BQKB1R b KQkq - - 7'
+
+    debug = False
+    # debug code
+    # if debug_move[0] in [p.val for p in positions]:
+    #     print("*******")
+    #     print("input")
+    #     print("*******")
+    #     debug = True
+    #     pos = [p for p in positions if p.val == "rnbqkb1r/pppppppp/5n2/8/3P4/8/PPP1PPPP/RNBQKBNR w KQkq - - 2"][0]
+    #     for x in superbooks[pos].new_marginal_moves:
+    #         print(x)
 
     #compute starting ev with no opening book
     starting_ev = sum([superbooks[p].get_total_ev(0) * probs[p] for p in positions])
@@ -458,11 +505,28 @@ def aggregate_random_books(n, positions, probs, superbooks):
     #     #list of positions with additional moves we haven't picked yet
     #     return [p for p in positions if superbooks[p].get_size() > cnts[p]]
 
+    # print("aggregating")
+    # print([p.val for p in positions])
+
+    if debug and (debug_child_pos in [p.val for p in positions]):
+        print("printing sub superbook")
+        debug_pos = [p for p in positions if p.val == debug_child_pos][0]
+        print(f"printing sub position to print: {debug_pos.val}")
+        for i, (add_moves, drop_moves) in enumerate(superbooks[debug_pos].new_marginal_moves):
+            add_pre = {m[:2] for m in add_moves}
+            drop_pre = {m[:2] for m in drop_moves}
+            print(superbooks[debug_pos].marginal_evs[i])
+            print(superbooks[debug_pos].est_marginal_evs[i])
+            print({x for x in add_moves  if x[:2] in add_pre and x[:2] not in drop_pre})
+            print({x for x in drop_moves if x[:2] in drop_pre and x[:2] not in add_pre})
+
+
     moves_by_fen = {} #fen -> {move}
     options = {x for x in positions if superbooks[x].get_size() > cnts[x]}
     marginal_evs = {x: superbooks[x].get_marginal_ev(cnts[x]+1) * probs[x] for x in positions}
+    est_marginal_evs = {x: superbooks[x].get_est_marginal_ev(cnts[x]+1) * probs[x] for x in positions}
 
-    def add(moves1, moves2, update=True, copy=False):
+    def add(moves1, moves2, update=True, multi=False):
         #add the moves from moves2 to the current set of moves moves1
         #note that this could require subtracting some moves
         #for examples if moves1 has a move for a certain fen
@@ -473,8 +537,6 @@ def aggregate_random_books(n, positions, probs, superbooks):
         #return: (set_of_added_moves, set_of_removed_moves)
         added_moves = set()
         removed_moves = set()
-        if copy:
-            moves1 = dict(moves1)
         for fen in moves2:
             moves = moves2[fen]
             for move in moves:
@@ -482,15 +544,18 @@ def aggregate_random_books(n, positions, probs, superbooks):
                 if update:
                     moves1.setdefault(fen,set())
                 if fen in moves1:
-                    if "move" in move[1]: #abstract move
-                        added_moves.add(move)
-                        if update:
-                            moves1[fen].add(move)
-                    else: #regular move
-                        added_moves.add(move)
-                        removed_moves.update(moves1[fen])
-                        if update:
-                            moves1[fen] = set([move])
+                    #bugfix: we shouldn't add to removed_moves if move in moves1[fen]
+                    if move not in moves1[fen]:
+                        abstract = "move" in move[1]
+                        if abstract or multi:
+                            added_moves.add(move)
+                            if update:
+                                moves1[fen].add(move)
+                        else:
+                            added_moves.add(move)
+                            removed_moves.update(moves1[fen])
+                            if update:
+                                moves1[fen] = set([move])
                 else:
                     added_moves.add(move)
                     if update:
@@ -504,17 +569,11 @@ def aggregate_random_books(n, positions, probs, superbooks):
             moves = moves2[fen]
             for move in moves:
                 if fen in moves1:
-                    if "move" in move[1]: #abstract move
-                        if move in moves1[fen]:
-                            removed_moves.add(move)
-                        if update:
-                            moves1[fen].discard(move)
-                            if  len(moves1[fen]) == 0:
-                                del moves1[fen]
-                    else: #regular move
-                        if move in moves1[fen]:
-                            removed_moves.add(move)
-                        if update:
+                    if move in moves1[fen]:
+                        removed_moves.add(move)
+                    if update:
+                        moves1[fen].discard(move)
+                        if len(moves1[fen]) == 0:
                             del moves1[fen]
         return added_moves, removed_moves
 
@@ -577,7 +636,7 @@ def aggregate_random_books(n, positions, probs, superbooks):
 
             #get_marginal_ev = lambda x: superbooks[x].get_marginal_ev(cnts[x]+1) * probs[x]
 
-            best_pos = max(options, key = lambda x: marginal_evs[x])
+            best_pos = max(options, key = lambda x: est_marginal_evs[x])
             # marginal_ev = get_marginal_ev(best_pos)
             marginal_ev = marginal_evs[best_pos]
 
@@ -602,15 +661,45 @@ def aggregate_random_books(n, positions, probs, superbooks):
             new_size += sum(len(tmp_add[x]) for x in tmp_add)
             new_size -= sum(len(tmp_remove[x]) for x in tmp_remove)
 
+            if debug and (debug_child_pos in [p.val for p in positions]):
+                print(f"debug pos: {len(output_superbook.new_marginal_moves)}")
+                print(best_pos.val, cnts[best_pos])
+                print([(p.val,cnts[p],marginal_evs[p], est_marginal_evs[p]) for p in cnts])
+                print(add_moves)
+                print(discard_moves)
+                print(tmp_add)
+                print(tmp_remove)
+                print("moves_by_fen")
+                print(moves_by_fen)
+                print(f"new_size: {new_size}, {i+1}")
+
+            if debug and (debug_move in add_moves or debug_move in discard_moves):
+                print("moves_by_fen")
+                print(moves_by_fen)
+                print("add discard moves")
+                print(add_moves)
+                print(discard_moves)
+                print(tmp_add, tmp_remove)
+
             if new_size > i+1:
                 #break out of the loop, we can't add another move
                 break
             else:
                 next_book_add, next_book_remove = combine_diffs(next_book_add, next_book_remove, add_moves_dict, discard_moves_dict)
 
+                if debug and (debug_move in add_moves or debug_move in discard_moves):
+                    print("next book add/remove")
+                    print(next_book_add, next_book_remove)
+
+                if debug and (debug_child_pos in [p.val for p in positions]):
+                    print("next book add/remove")
+                    print(next_book_add, next_book_remove)
+
+
                 cnts[best_pos] = cnts[best_pos] + 1
                 if superbooks[best_pos].get_size() > cnts[best_pos]:
                     marginal_evs[best_pos] = superbooks[best_pos].get_marginal_ev(cnts[best_pos]+1) * probs[best_pos]
+                    est_marginal_evs[best_pos] = superbooks[best_pos].get_est_marginal_ev(cnts[best_pos]+1) * probs[best_pos]
                 else:
                     #remove best_pos from options
                     options.discard(best_pos)
@@ -621,6 +710,12 @@ def aggregate_random_books(n, positions, probs, superbooks):
             #options = get_options()
             if len(options) == 0:
                 break
+
+        if debug and ((debug_move[0] in next_book_add and debug_move in next_book_add[debug_move[0]]) or (debug_move[0] in next_book_remove and debug_move in next_book_remove[debug_move[0]])):
+            print("applying diff")
+            print(moves_by_fen)
+            print(next_book_add)
+            print(next_book_remove)
 
         #compute new moves to add and old moves to remove
         tmp_add, tmp_remove = apply_diff(moves_by_fen, next_book_add, next_book_remove)
@@ -638,7 +733,55 @@ def aggregate_random_books(n, positions, probs, superbooks):
         add_set = set().union(*tmp_add.values())
         remove_set = set().union(*tmp_remove.values())
 
+        if debug and ((debug_move[0] in next_book_add and debug_move in next_book_add[debug_move[0]]) or (debug_move[0] in next_book_remove and debug_move in next_book_remove[debug_move[0]])):
+            print("tmp_add, tmp_remove")
+            print(tmp_add, tmp_remove)
+            print("add/remove set")
+            print(add_set, remove_set)
+            print("positions")
+            print([p.val for p in positions])
+
+        for x in add_set:
+            if x in remove_set:
+                print(add_set)
+                print(remove_set)
+                raise
+
+        # if len(add_set) == 0:
+        #     print("empty add!")
+        #     print([p.val for p in positions])
+        #     print(f"cnt: {len(output_superbook.new_marginal_moves)}")
+        #     print(add_set)
+        #     print(remove_set)
+        #     print(moves_by_fen)
+        #     print(next_book_add)
+        #     print(next_book_remove)
+        #     raise
+
+        #TODO: what to do when we're aggregating from two subbooks
+        #that each include the same move (transpositions)
+        if any([est_marginal_evs[p] == 0 and probs[p] != 0 for p in positions]):
+            print("zero marginal value")
+            zero_pos = [p for p in positions if est_marginal_evs[p] == 0][0]
+            print({p.val: (cnts[p],est_marginal_evs[p]) for p in positions})
+            print("prob")
+            print(probs[zero_pos])
+            print(f"book size: {zero_pos.val} - {len(superbooks[zero_pos].new_marginal_moves)}")
+            for i in range(len(superbooks[zero_pos].new_marginal_moves)):
+                print(superbooks[zero_pos].new_marginal_moves[i], superbooks[zero_pos].est_marginal_evs[i])
+            raise
+
         output_superbook.add_marginal_moves(i+1, add_set, remove_set, total_ev) #OpeningBook(list(moves))
+
+    if debug and ((debug_move[0] in [p.val for p in positions]) or (debug_child_pos in [p.val for p in positions])):
+        print("*******")
+        print("output")
+        print("*******")
+        print([p.val for p in positions])
+        print(f"book size: {len(output_superbook.new_marginal_moves)}")
+        pos = [p for p in positions if (p.val == debug_move[0] or p.val == debug_child_pos)][0]
+        for i in range(len(output_superbook.new_marginal_moves)):
+            print(output_superbook.new_marginal_moves[i], output_superbook.marginal_evs[i])
 
     return output_superbook
 
@@ -740,6 +883,7 @@ class SuperBook:
         self.new_marginal_moves = [] #[(added_moves, removed_moves)]
         self.total_evs = []
         self.marginal_evs = []
+        self.est_marginal_evs = []
     @staticmethod
     def placeholder(position, starting_ev, move_cnt):
         sb = SuperBook(position, starting_ev)
@@ -762,9 +906,11 @@ class SuperBook:
         self.total_evs.append(total_ev)
         if i == 1:
             self.marginal_evs.append(total_ev - self.starting_ev)
+            self.est_marginal_evs.append(total_ev - self.starting_ev)
             self.new_marginal_moves.append((book.get_moves(),[]))
         else:
             self.marginal_evs.append(self.total_evs[i-1] - self.total_evs[i-2])
+            self.est_marginal_evs.append(self.total_evs[i-1] - self.total_evs[i-2])
             if isinstance(self.books[i-1],PlaceholderOpeningBook) and \
                isinstance(self.books[i-2],PlaceholderOpeningBook) and \
                self.books[i-1].position == self.books[i-2].position:
@@ -782,8 +928,36 @@ class SuperBook:
 
         if i == 1:
             self.marginal_evs.append(total_ev - self.starting_ev)
+            self.est_marginal_evs.append(total_ev - self.starting_ev)
         else:
-            self.marginal_evs.append(self.total_evs[i-1] - self.total_evs[i-2])
+            marginal_ev = self.total_evs[i-1] - self.total_evs[i-2]
+            if marginal_ev == 0:
+                #marginal_ev of 0 causes problems: the greedy algorithm will never add that
+                #move even if there are valuable moves after it
+                #so smooth the evs for now to avoid marginal_ev = 0
+                self.est_marginal_evs.append(self.est_marginal_evs[i-2] * 0.9)
+            elif len([x for x in added_moves if "move" in x[1]]) - len([x for x in removed_moves if "move" in x[1]]) == 1:
+                #added an abstract move -- use the real marginal_ev as the est_marginal_ev
+                self.est_marginal_evs.append(marginal_ev)
+            else:
+                # if marginal_ev < 0.1 * self.marginal_evs[i-2] and marginal_ev < 10**-5:
+                #     print("major decline")
+                #     print(marginal_ev)
+                #     print(self.est_marginal_evs[i-2])
+                #     print(added_moves)
+                #     print(removed_moves)
+                #     print("printing superbook")
+                #     for i, (add_moves, drop_moves) in enumerate(self.new_marginal_moves):
+                #         add_pre = {m[:2] for m in add_moves}
+                #         drop_pre = {m[:2] for m in drop_moves}
+                #         print("ev")
+                #         print(self.marginal_evs[i])
+                #         print(self.est_marginal_evs[i])
+                #         print(add_pre)
+                #         print(drop_pre)
+                #     raise
+                self.est_marginal_evs.append(min(max(marginal_ev, self.est_marginal_evs[i-2] * 0.8), self.est_marginal_evs[i-2] * 1.2))
+            self.marginal_evs.append(marginal_ev)
     def get_total_ev(self, k):
         #EV of learning the book with (up to) k moves
         if k==0:
@@ -792,6 +966,8 @@ class SuperBook:
             return self.total_evs[k-1]
     def get_marginal_ev(self, k):
         return self.marginal_evs[k-1]
+    def get_est_marginal_ev(self, k):
+        return self.est_marginal_evs[k-1]
     def get_book(self, k):
         #deprecated, remove after a while 2020-03-22
         return self.books[k-1]
@@ -830,6 +1006,8 @@ class PlaceholderSuperBook(SuperBook):
         #EV of learning the book with (up to) k moves
         return self.starting_ev + OUT_OF_BOOK_PREP_VALUE(k)
     def get_marginal_ev(self, k):
+        return OUT_OF_BOOK_PREP_VALUE(k) - OUT_OF_BOOK_PREP_VALUE(k-1)
+    def get_est_marginal_ev(self, k):
         return OUT_OF_BOOK_PREP_VALUE(k) - OUT_OF_BOOK_PREP_VALUE(k-1)
     def get_marginal_moves(self, k):
         marginal_move = (self.position.val, f"move_{k-1}", self.get_total_ev(k))
@@ -931,13 +1109,17 @@ def generate_position_stats():
             move_cnts = eval(row["move_cnts"])
 
             #use this for quick tests
-            # if (sum(move_cnts[x] for x in move_cnts) < 100): continue #MUST: REMOVE
+            # if (sum(move_cnts[x] for x in move_cnts) < 10000): continue #MUST: REMOVE
 
             move_history = eval(row["move_history"])
 
             fen = row["fen"]
-            positions[fen] = {"fen":fen, "move_cnts":move_cnts, "move_history": str(move_history)}
 
+            if fen == "rnbqk2r/ppppppbp/5np1/8/2PPP3/5N2/PP3PPP/RNBQKB1R b KQkq - - 4": #guess this only comes up in pre-moves and is extremely successful there
+                move_cnts["f6e4"] = 100
+                print("hard coding f6e4 in this position: rnbqk2r/ppppppbp/5np1/8/2PPP3/5N2/PP3PPP/RNBQKB1R b KQkq - - 4")
+
+            positions[fen] = {"fen":fen, "move_cnts":move_cnts, "move_history": str(move_history)}
             #set child info if not set
             for move in move_cnts:
                 child_fen = pseudo_fen_plus_move(fen, move)
@@ -973,6 +1155,7 @@ def generate_position_stats():
         #set counts
         total_cnt = 0
         total_weight = 0
+
         for move in info["move_cnts"]:
             prob_mult = PROBABILITY_MULTIPLIERS.get((fen, move),1)
             if PLAYER_STRENGTH:
@@ -1049,6 +1232,18 @@ def print_book(superbook, name):
     print(best_i)
     print('move cnt:' + str(len(best_book.get_moves())))
     moves = [m for m in best_book.get_moves() if m]
+
+    #testing:
+    print("superbook marginal moves")
+    for i, (add_moves, drop_moves) in enumerate(superbook.new_marginal_moves):
+        add_pre = {m[:2] for m in add_moves}
+        drop_pre = {m[:2] for m in drop_moves}
+        print("ev")
+        print(superbook.marginal_evs[i])
+        print(superbook.est_marginal_evs[i])
+        print({x for x in add_moves  if x[:2] in add_pre and x[:2] not in drop_pre})
+        print({x for x in drop_moves if x[:2] in drop_pre and x[:2] not in add_pre})
+
     with open(f"/tmp/{name}_opening_book.txt", "w") as f_out:
         for m in sorted(moves, key=lambda x: x[0]):
             fen = m[0]
@@ -1108,15 +1303,9 @@ def get_book_info(book_hash, start_node, start_node_prob, move_cnt):
 
 def generate_book(starting_fen, move_cnt, side, nodes):
     #reset the global caches
-    global P1_CACHE
-    global P2_CACHE
-    global P1_CACHE_STATS
-    global P2_CACHE_STATS
+    global CACHE_STATS
 
-    P1_CACHE = {}
-    P2_CACHE = {}
-    P1_CACHE_STATS = {}
-    P2_CACHE_STATS = {}
+    CACHE_STATS = {}
 
     start_node = nodes[starting_fen]
     print("generating book")
@@ -1128,10 +1317,7 @@ def generate_book(starting_fen, move_cnt, side, nodes):
         raise
     print_book(superbook, side)
 
-    P1_CACHE = {}
-    P2_CACHE = {}
-    P1_CACHE_STATS = {}
-    P2_CACHE_STATS = {}
+    CACHE_STATS = {}
 
     #Refine evaluations:
     #the above evaluations are 1 second per move, which gives some inaccuracies
@@ -1152,11 +1338,11 @@ def generate_book(starting_fen, move_cnt, side, nodes):
         if fen not in book_hash or value > book_hash[fen][2]:
             book_hash[fen] = x
 
-    top_leaves, biggest_errors = get_book_info(book_hash, start_node, 1, 100) #top 100 positions
+    top_leaves, biggest_errors = get_book_info(book_hash, start_node, 1, 250) #top 250 positions
     print(top_leaves)
     print(biggest_errors)
     for fen,prob in top_leaves:
-        evaluate_pseudo_fen(fen, 4000 * EVAL_TIME * prob)[1] #compute these nodes in depth proportional to their likelihood
+        evaluate_pseudo_fen(fen, 8000 * EVAL_TIME * prob)[1] #compute these nodes in depth proportional to their likelihood
     print("done refining evaluations")
 
 if __name__ == "__main__":
@@ -1173,12 +1359,15 @@ if __name__ == "__main__":
 
     starting_history = [] #['e2e4', 'e7e5'] #['e2e4', 'g8f6'] #['e2e4', 'g8f6', 'e4e5', 'f6d5']
     starting_fen = move_history_to_pseudo_fen(str(starting_history))
+    # starting_fen = 'rnbqkb1r/ppp2ppp/4pn2/3p4/3PP3/2N5/PPP2PPP/R1BQKBNR w KQkq - - 4'
+    # starting_fen = 'rnbqkb1r/pppn1ppp/4p3/3pP3/3P4/2N5/PPP2PPP/R1BQKBNR w KQkq - - 5'
     start_node = nodes[starting_fen]
 
     move_cnt = 1000
 
-    generate_book(starting_fen, move_cnt, "white", nodes)
-    #generate_book(starting_fen, move_cnt, "black", positions, nodes) #MUST: CLEAR OUT THE COUNTERS INSIDE generate_book
+    # generate_book(starting_fen, move_cnt, "white", nodes)
+    generate_book(starting_fen, move_cnt, "black", nodes) #MUST: CLEAR OUT THE COUNTERS INSIDE generate_book
+
 
     print(LEAF_COUNT)
 
