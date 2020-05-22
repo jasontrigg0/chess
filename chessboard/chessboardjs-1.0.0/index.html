@@ -11,9 +11,9 @@
   <body>
     <div>
       <div>
-       <input type="radio" id="white" name="color" value="white" onclick='setSide()' checked="checked">
+       <input type="radio" id="white" name="color" value="white" onclick='setSide(); this.blur()' checked="checked">
        <label for="white">White</label><br>
-       <input type="radio" id="black" name="color" value="black" onclick='setSide()'>
+       <input type="radio" id="black" name="color" value="black" onclick='setSide(); this.blur()'>
        <label for="black">Black</label><br>
       </div>
       <div>
