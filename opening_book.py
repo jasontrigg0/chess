@@ -1212,7 +1212,7 @@ def generate_game_tree(positions):
 
     return nodes
 
-def print_book(superbook, name):
+def print_book(superbook, name, positions):
     print(superbook.get_total_ev(0))
     #note: the best book might not be the one with the most moves!
     #TODO: throw out all too-large books
@@ -1247,11 +1247,12 @@ def print_book(superbook, name):
     with open(f"/tmp/{name}_opening_book.txt", "w") as f_out:
         for m in sorted(moves, key=lambda x: x[0]):
             fen = m[0]
+            move = m[1]
             #print_pseudo_fen(fen)
-            f_out.write(str(m) + '\n')
+            move_cnts = positions[fen]["move_cnts"]
+            opp_move_cnts = positions[pseudo_fen_plus_move(fen, move)]["move_cnts"] if "move" not in move else {}
+            f_out.write(str([x for x in m] + [move_cnts] + [opp_move_cnts]) + '\n')
             print(m)
-            # print(positions[fen]["move_cnts"])
-            # print(positions[fen]["total_cnt"])
 
 def get_book_info(book_hash, start_node, start_node_prob, move_cnt):
     #NOTE: this doesn't account for transpositions
@@ -1301,7 +1302,7 @@ def get_book_info(book_hash, start_node, start_node_prob, move_cnt):
 
         return leaves, errors
 
-def generate_book(starting_fen, move_cnt, side, nodes):
+def generate_book(starting_fen, move_cnt, side, nodes, positions):
     #reset the global caches
     global CACHE_STATS
 
@@ -1315,7 +1316,7 @@ def generate_book(starting_fen, move_cnt, side, nodes):
         superbook = compute_p2_book(start_node, move_cnt, 0)
     else:
         raise
-    print_book(superbook, side)
+    print_book(superbook, side, positions)
 
     CACHE_STATS = {}
 
@@ -1365,8 +1366,8 @@ if __name__ == "__main__":
 
     move_cnt = 1000
 
-    # generate_book(starting_fen, move_cnt, "white", nodes)
-    generate_book(starting_fen, move_cnt, "black", nodes) #MUST: CLEAR OUT THE COUNTERS INSIDE generate_book
+    # generate_book(starting_fen, move_cnt, "white", nodes, positions)
+    generate_book(starting_fen, move_cnt, "black", nodes, positions) #MUST: CLEAR OUT THE COUNTERS INSIDE generate_book
 
 
     print(LEAF_COUNT)
