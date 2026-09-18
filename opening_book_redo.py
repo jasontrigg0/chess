@@ -54,6 +54,11 @@ disallowed_moves = {
     "r1bqkb1r/ppp2ppp/8/3pP3/P2Q4/8/1PP2PPP/RNB2RK1 w kq d6 0 1": ["e5d6"], #most common, looks like white wants a draw here
     "r1bq1rk1/2p1bppp/p1np1n2/1p2p1N1/4P3/1BP4P/PP1P1PP1/RNBQR1K1 w - - 0 1": ["g5f3"], #most common but d2d4 is fine
     "r2qkb1r/2Rb1ppp/pB2p3/3pP3/5P2/2N5/P1PQ2PP/4K2R w Kkq - 0 1": ["c7b7"],
+    "rn1qkb1r/pp1bpppp/3p4/8/3NP1n1/2N1B3/PPP2PPP/R2QKB1R w KQkq - 0 1": ["e3c1"],
+    "r1bqkb1r/1p1npppp/p1p5/2Pp3n/3P1B2/2N2N2/PP2PPPP/R2QKB1R w KQkq - 0 1": ["f4c1"],
+    "r1bqkb1r/pp1n1ppp/2p5/3p3n/3P1B2/2N2N2/PPQ1PPPP/R3KB1R w KQkq - 0 1": ["f4d2"], #most common by a bit
+    "rn3rk1/p3ppbp/1p4p1/8/3PP1b1/4BN2/1q2BPPP/R2Q1RK1 w - - 0 1": ["a1b1"], #rook vs queen standoff, new position
+    "r1b1kb1r/pp1n1ppp/1qn1p3/3pP3/3N1P2/2N1B3/PPP3PP/R2QKB1R w KQkq - 0 1": ["c3a4"],
 }
 
 EVAL_TIME = 1
@@ -101,6 +106,23 @@ PROBABILITY_MULTIPLIERS = {
     #
     #not terrible but uncommon at top levels
     ('rnbqkbnr/ppp2ppp/4p3/3p4/3PP3/2N5/PPP2PPP/R1BQKBNR b KQkq - 0 1', 'f8b4'): 0.5,
+
+
+    #trap in the semi-slav! maia thinks 50/50 between f6h5 and e8g8 but in the lichess
+    #masters db it's been e8g8 in all four cases, so push that down for now
+    ('rn1qk2r/pb3pb1/2p1pn1p/1p2N1pB/2pPP3/2N3B1/PP3PPP/R2QK2R b KQkq - 0 1', 'f6h5'): 0.25,
+
+    #trap in queen's indian. Maia has 15% of this game-ending blunder but probably lower than
+    #that against strong competition, it's only 9% in lichess player db
+    ('rn1qk2r/pb1pbppp/1pp2n2/3p1N2/2P5/6P1/PP2PPBP/RNBQK2R b KQkq - 0 1', 'd5c4'): 0.25,
+
+    #overreacting to one time this happened in our db, vs far less common in lichess
+    ('rn1qk2r/pbppbppp/1p2pn2/3P4/2P5/5NP1/PP2PPBP/RNBQK2R b KQkq - 0 1', 'c7c6'): 0.1,
+
+    #move relatively deep in grunfeld in the default d4 book. a6 most common on lichess
+    #vs b6 most common for maia and much better for white
+    ('r4rk1/pp2ppbp/6p1/n2P2B1/4P3/q4P2/4BP1P/1R1QR1K1 b - - 0 1', 'a7a6'): 10,
+    
 }
 
 #value of studying k moves out of book
@@ -143,14 +165,14 @@ class SuperBook:
             #don't want this to happen: can it?
             print(self.position)
             raise
-        elif -0.0001 < delta < 0.0001:
-            if cnt == 1:
-                self.marginal_vals[cnt] = 0.0036 #baseline estimate
-            else:
-                #adjust
-                self.marginal_vals[cnt] = 0.9 * self.marginal_vals[cnt-1]
         else:
-            self.marginal_vals[cnt] = self.evs[cnt] - self.evs[cnt-1]
+            #don't let marginal vals get too small. the algorithm
+            #for picking which moves to learn is greedy, so it won't
+            #be able to see past one low marginal value to the others
+            val = max(delta, 0.5 * (OUT_OF_BOOK_PREP_VALUE(cnt) - OUT_OF_BOOK_PREP_VALUE(cnt-1)))
+            # if cnt > 1:
+            #     val = max(val, 0.9 * self.marginal_vals[cnt-1])
+            self.marginal_vals[cnt] = val
     def total_moves(self):
         return max(self.moves.keys())
     def get_moves(self, k):
@@ -180,7 +202,7 @@ class PlaceholderSuperBook(SuperBook):
 
 P1_CACHE = {}
 P2_CACHE = {}
-CACHE_THRESHOLD = 2
+CACHE_THRESHOLD = 4
 SUPERBOOK_CNT = { "unique": 0, "total": 0 }
 
 def compute_p1_superbook(pos, cnt, optimism=0):
@@ -482,13 +504,13 @@ def load_leaves():
         total_cnt = sum(all_moves.get(fen,{}).values())
         move_probs = {m: all_moves[fen][m]/total_cnt for m in all_moves.get(fen,{})}
 
-        maia_probs = maia_evals.get(fen,{})
-        if not maia_probs:
+        if not fen in maia_evals:
             maia_probs = fen_to_probs(fen)
-
-        maia_probs = {x:maia_probs[x] for x in maia_probs if maia_probs[x] > 0.05}
+            maia_evals[fen] = {x:maia_probs[x] for x in maia_probs if maia_probs[x] > 0.05}
+            
+        maia_probs = maia_evals[fen]
         prob_sum = sum(maia_probs.values())
-        maia_probs = {x:maia_probs[x]/prob_sum for x in maia_probs}
+        maia_normed = {x:maia_probs[x]/prob_sum for x in maia_probs}
 
         probs = {}
         next_moves = set([*move_probs.keys(), *maia_probs.keys()])
@@ -501,6 +523,16 @@ def load_leaves():
         }
 
     print(f"loaded {len(positions)} leaf positions")
+
+    with open("maia_evals.csv","w") as f_out:
+        writer = csv.DictWriter(f_out, fieldnames=["fen","probs"])
+        writer.writeheader()
+        for fen in leaves:
+            writer.writerow({
+                "fen": fen,
+                "probs": maia_evals[fen]
+            })
+
     return positions
 
 def generate_position_stats():
@@ -597,30 +629,31 @@ def get_book_info(starting_fen, side, nodes, superbook, move_cnt):
     errors = []
     
     #dfs
-    todos = [(nodes[starting_fen],1)]
+    todos = [(nodes[starting_fen],1,[])]
     done = set()
     while todos:
-        curr, prob = todos.pop(0)
+        curr, prob, path = todos.pop(0)
         fen = curr["val"]
         my_turn = (side[0] == fen.split()[-5])
 
         if fen in fen_to_move:
             print("--")
-            print(fen_to_move[fen])
-            print("--")
-            print(chess.Board(fen))
-            print("--")
+            print(path, fen_to_move[fen])
+            # print(fen_to_move[fen])
+            # print("--")
+            # print(chess.Board(fen))
+            # print("--")
             done.add(fen)
             move = fen_to_move[fen][1]
             if "move" in move:
-                leaves.append((fen, prob, move))
+                leaves.append((fen, prob, path, move))
             else:
                 next_fen = fen_plus_move(fen, move)
                 child = [x for x in curr["children"] if x["val"] == next_fen][0]
-                todos.insert(0, (child, prob))
+                todos.insert(0, (child, prob, [*path, move]))
         else:
             if my_turn or (not curr["children"]):
-                leaves.append((fen, prob))
+                leaves.append((fen, prob, path))
             else:
                 child_fen_to_prob = {x["val"]: curr["probs"][x["val"]] for x in curr["children"]}
                 best_move = evaluate_fen(fen, EVAL_TIME)[0]
@@ -631,10 +664,14 @@ def get_book_info(starting_fen, side, nodes, superbook, move_cnt):
                     move_ev = get_ev(move_fen, EVAL_TIME, 0)
                     move_prob = child_fen_to_prob[x["val"]]
                     ev_loss = best_move_ev - move_ev
-                    errors.append((fen, move_fen, ev_loss * move_prob, prob, ev_loss * prob * move_prob))
+
+                    #adjust to skip insignificant "errors" in the first couple moves
+                    adj_ev_loss = min(0,ev_loss + 0.005) 
+                    errors.append((fen, move_fen, adj_ev_loss * move_prob, prob, adj_ev_loss * prob * move_prob))
                 sorted_children = sorted(curr["children"], key = lambda x: child_fen_to_prob[x["val"]])
                 for child in sorted_children:
-                    todos.insert(0, (child, prob*child_fen_to_prob[child["val"]]))
+                    move = curr["moves"][child["val"]]
+                    todos.insert(0, (child, prob*child_fen_to_prob[child["val"]], [*path, move]))
                     
     print("---")
     print("---")
@@ -643,7 +680,7 @@ def get_book_info(starting_fen, side, nodes, superbook, move_cnt):
 
     best_leaves = set([r["fen"] for r in csv.DictReader(open("leaves.csv"))])
     
-    for i in leaves[:25]:
+    for i in leaves[:100]:
         print(i)
         fen = i[0]
         eval_time = get_eval_time(fen)
@@ -653,7 +690,24 @@ def get_book_info(starting_fen, side, nodes, superbook, move_cnt):
         else:
             #already deeply evaluated
             best_leaves.add(fen)
-                
+
+    print("---")
+    print("---")
+    print("most out of book")
+    out_of_book = [l for l in leaves if len(l) == 4]
+    out_of_book.sort(key = lambda x: x[3], reverse=True)
+
+    for i in out_of_book[:100]:
+        print(i)
+        fen = i[0]
+        eval_time = get_eval_time(fen)
+        if eval_time <= EVAL_TIME:
+            #evaluate more deeply
+            get_ev(fen, EVAL_TIME * 8, 0)
+        else:
+            #already deeply evaluated
+            best_leaves.add(fen)
+            
     with open("leaves.csv","w") as f_out:
         writer = csv.DictWriter(f_out, fieldnames=["fen"])
         writer.writeheader()
@@ -664,7 +718,7 @@ def get_book_info(starting_fen, side, nodes, superbook, move_cnt):
     print("---")
     print("top errors")
     errors.sort(key = lambda x: x[4])
-    for i in errors[:25]:
+    for i in errors[:100]:
         print(i)
         fen = i[0]
         best_move = evaluate_fen(fen, EVAL_TIME * 8)[0]
@@ -677,7 +731,7 @@ def get_book_info(starting_fen, side, nodes, superbook, move_cnt):
     print("---")
     print("top blunders")
     errors.sort(key = lambda x: x[2])
-    for i in errors[:25]:
+    for i in errors[:100]:
         print(i)
         fen = i[0]
         best_move = evaluate_fen(fen, EVAL_TIME * 8)[0]
@@ -699,7 +753,7 @@ if __name__ == "__main__":
     starting_fen = move_history_to_fen(starting_history)
     print(starting_fen)
     
-    move_cnt = 100
+    move_cnt = 1000
     
     generate_book(starting_fen, move_cnt, "white", nodes)
     

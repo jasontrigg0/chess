@@ -1,6 +1,5 @@
 #https://github.com/niklasf/python-chess
 import chess
-import chess.uci
 import chess.pgn
 import chess.polyglot
 import csv
@@ -10,6 +9,10 @@ import hashlib
 import math
 import base64
 
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+
 from eval_moves import fen_plus_move, move_history_to_fen
 
 #TODO: lots of unused code here, try to remove it
@@ -17,6 +20,7 @@ from eval_moves import fen_plus_move, move_history_to_fen
 
 #PGN_FILE = "/ssd/files/chess/lichess_db_standard_rated_2018-10.pgn"
 PGN_FILE = "/home/jtrigg/files/misc/KingBase2018-all.pgn"
+PGN_FILE = "/home/jtrigg/Downloads/LumbrasGigaBase_OTB_ELO2400.pgn"
 #PGN_FILE = "/tmp/test.pgn"
 #PGN_FILE = "/tmp/kingbase1pct.pgn"
 CEREBELLUM_FILE = "/home/jtrigg/Downloads/Cerebellum_light_180611/Cerebellum_Light_Poly.bin"
@@ -130,7 +134,7 @@ def fetch_games_parallel(parallel_total, parallel_id):
                             writer.writerow(outrow)
 
 def pgn_to_csv():
-    with open("/ssd/files/chess/games.csv",'w') as csvfile:
+    with open("/tmp/games.csv",'w') as csvfile:
         writer = csv.writer(csvfile)
         writer.writerow(["moves"])
         for game in pgn_to_games(PGN_FILE):
@@ -167,7 +171,7 @@ def filter_csv():
     #             fens = [fen for fen in game_moves_to_fens(moves)]
     #             writer.writerow([fens])
 
-    with open("/ssd/files/chess/filtered_moves_20200309.csv", 'w') as outfile:
+    with open("/tmp/filtered_moves.csv", 'w') as outfile:
         writer = csv.writer(outfile)
         writer.writerow(["fen","move_cnts","move_history"])
         for seed in range(PARALLEL_TOTAL):
@@ -235,8 +239,44 @@ def filter_csv():
             #                     writer.writerow([history,next_move])
 
 
+def pgn_to_moves():
+    pgn = open(PGN_FILE, errors="replace")
+
+    fen_cnts = {}
+    fen_move_cnts = {}
+    cnt = 0
+    with open("/tmp/all_moves.csv","w") as f_out:
+        writer = csv.writer(f_out)
+        writer.writerow(["fen","move_cnts"])
+        while True:
+            game = chess.pgn.read_game(pgn)
+            cnt += 1
+            if cnt % 1000 == 0:
+                print(cnt)
+            if not game:
+                break
+            board = game.board()
+            for move in game.mainline_moves():
+                start_position = board.fen()
+
+                #normalize the fen to account for transpositions
+                pieces = start_position.split()
+                pieces[-2] = "0"
+                pieces[-1] = "1"
+                fen = " ".join(pieces)
+
+                fen_cnts[fen] = fen_cnts.setdefault(fen,0) + 1
+                fen_move_cnts.setdefault(fen,{})
+                fen_move_cnts[fen][str(move)] = fen_move_cnts[fen].setdefault(str(move),0) + 1
+                board.push(move)
+        for fen in fen_cnts:
+            writer.writerow([fen, str(fen_move_cnts[fen])])
+    
+
 if __name__ == "__main__":
     #OUTPUT_FILE = "/tmp/filtered_moves.csv" if FILTER_MIN_CNT else "/tmp/moves.csv"
 
     #pgn_to_csv()
-    filter_csv()
+    #filter_csv()
+
+    pgn_to_moves()

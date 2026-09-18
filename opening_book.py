@@ -923,6 +923,7 @@ class SuperBook:
                 self.new_marginal_moves.append((list(added_moves), list(removed_moves)))
 
     def add_marginal_moves(self, i, added_moves, removed_moves, total_ev):
+        #TODO: check that new marginal moves has the right length
         self.new_marginal_moves.append((added_moves, removed_moves))
         self.total_evs.append(total_ev)
 

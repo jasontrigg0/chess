@@ -1,5 +1,4 @@
 import chess
-import chess.uci
 import chess.polyglot
 import chess.engine
 import pickle
