@@ -59,9 +59,16 @@ disallowed_moves = {
     "r1bqkb1r/pp1n1ppp/2p5/3p3n/3P1B2/2N2N2/PPQ1PPPP/R3KB1R w KQkq - 0 1": ["f4d2"], #most common by a bit
     "rn3rk1/p3ppbp/1p4p1/8/3PP1b1/4BN2/1q2BPPP/R2Q1RK1 w - - 0 1": ["a1b1"], #rook vs queen standoff, new position
     "r1b1kb1r/pp1n1ppp/1qn1p3/3pP3/3N1P2/2N1B3/PPP3PP/R2QKB1R w KQkq - 0 1": ["c3a4"],
+    "3r1k2/p2Pr2p/1p1B4/2p3b1/2B5/8/P3R1PP/6K1 w - - 0 1": ["c4b5"],
 }
 
 EVAL_TIME = 1
+STRENGTH = 1.6 #plays the right move 90/10 instead of 80/20
+MISSING_MOVES = {
+    'r2r2k1/pp2ppb1/6pp/n2PP3/6b1/5N2/qR2BPPP/2BQR1K1 b - - 0 1': {'a2a1': 10},
+    '1r1qk2r/p2pbppp/4p3/2p1P3/2Pn4/3Q2P1/PP3PBP/1RB1R1K1 b k - 0 1': {'a7a5': 1},
+    'rn1q4/pb3kb1/2p1pn1p/1p2P1p1/2pP4/2N3B1/PP3PPP/R2QK2R b KQ - 0 1': {'f6h7': 4}, #4/4 in lichess
+}
 PROBABILITY_MULTIPLIERS = {
     #King's Indian Defense is a bad opening according to the internet, also Stockfish.
     #1. d4  Nf6
@@ -70,7 +77,7 @@ PROBABILITY_MULTIPLIERS = {
     #
     #3..d5 is the grunfeld which is strong
     #3..Bg7 is the KID
-    ('rnbqkb1r/pppppp1p/5np1/8/2PP4/2N5/PP2PPPP/R1BQKBNR b KQkq - 0 1', 'f8g7'): 0.25,
+    ('rnbqkb1r/pppppp1p/5np1/8/2PP4/2N5/PP2PPPP/R1BQKBNR b KQkq - 0 1', 'f8g7'): 0.12,
 
     #KID attempt #2
     #1. d4  Nf6
@@ -107,6 +114,14 @@ PROBABILITY_MULTIPLIERS = {
     #not terrible but uncommon at top levels
     ('rnbqkbnr/ppp2ppp/4p3/3p4/3PP3/2N5/PPP2PPP/R1BQKBNR b KQkq - 0 1', 'f8b4'): 0.5,
 
+    #KID attempt #4
+    #1. d4  Nf6
+    #2. Nf3 g6
+    #3. c4  Bg7
+    #4. Nc3 O-O
+    #
+    #4..d5 is grunfeld
+    ('rnbqk2r/ppppppbp/5np1/8/2PP4/2N2N2/PP2PPPP/R1BQKB1R b KQkq - 0 1', 'e8g8'): 0.25,
 
     #trap in the semi-slav! maia thinks 50/50 between f6h5 and e8g8 but in the lichess
     #masters db it's been e8g8 in all four cases, so push that down for now
@@ -122,7 +137,75 @@ PROBABILITY_MULTIPLIERS = {
     #move relatively deep in grunfeld in the default d4 book. a6 most common on lichess
     #vs b6 most common for maia and much better for white
     ('r4rk1/pp2ppbp/6p1/n2P2B1/4P3/q4P2/4BP1P/1R1QR1K1 b - - 0 1', 'a7a6'): 10,
-    
+
+    #another move deep in the grunfeld after a questionable b7c3 from black
+    #maia has the blunder h7g6 at 75% but we see f7g6 7/7 in lichess
+    ('r2qr1k1/pp3p1p/6P1/n1pPp3/4P3/2Q2P2/P3BP2/1R2K2R b K - 0 1', 'h7g6'): 0.3,
+
+    #maia thinks 72% chance of blunder here, should be way lower
+    ('1r2k2r/p2pbppp/4p3/q1p1P3/1PPn4/3Q2P1/P4PBP/1RB1R1K1 b k - 0 1', 'b8b4'): 0.05,
+
+    #maia thinks 77% chance of blunder here, should be lower
+    ('r4rk1/4Rpbp/6p1/3Pn3/p3P3/4BP2/q3BP1P/3QR1K1 b - - 0 1', 'a4a3'): 0.1,
+
+    #maia thinks 22% chance of blunder here, should be lower
+    ('r4rk1/pb3pb1/1p1qpnp1/2pP2N1/4P3/7R/P3BPP1/2BQ1RK1 w - - 0 1', 'e7e6'): 0.2,
+
+    #maia thinks 50% chance of blunder here, should be lower
+    ('1r3rk1/p4p1p/1p1P1qP1/bBp5/8/B1P5/P2Q2PP/5RK1 b - - 0 1', 'a5c3'): 5,
+
+    #maia thinks 22% chance of blunder here, should be lower
+    ('r4rk1/pb2ppb1/1p1q1np1/2pP2N1/4P3/7R/P3BPP1/2BQ1RK1 b - - 0 1', 'e7e6'): 0.25,
+
+    #give a reasonable chance of picking the best move, we've seen f8e7 3/3
+    #but lichess has seen d7d6
+    ('1r1qkb1r/p2p1ppp/4p3/2p1P3/2Pn4/3Q2P1/PP3PBP/R1B1R1K1 b k - 0 1', 'd7d6'): 5,
+
+    #maia thinks c6d4 only 10% but has happened 3/3 times in lichess
+    ('r4rk1/pp2ppbp/2n3p1/3P4/4P3/4BP2/q3BP1P/1R1Q1RK1 b - - 0 1', 'c6d4'): 10,
+
+    #would be interesting to get thoughts but maia's 10% of holding the
+    #position seems low
+    ('r4rk1/4Bpbp/p2P2p1/2q5/2p5/5P2/5P1P/1R1QR1K1 b - - 0 1', 'f8e8'): 5,
+
+    #maia thinks best move is 6% likely: it's 52% in lichess db but maybe
+    #that's mostly correspondence?
+    ('r4rk1/pp2ppbp/6p1/n2P2B1/4P3/q4P2/4BP1P/1R1QR1K1 b - - 0 1', 'a7a6'): 10,
+
+    #maia gives 19% chance of this move to hold, lichess has seen
+    #it 1/1 times so pushing up some
+    ('r4rk1/5pbp/p2P2p1/6B1/2p5/q4P2/5P1P/1R1QR1K1 b - - 0 1','a3c5'): 2,
+
+    #stockfish misvalues position
+    #even after up to 1min of evaluation (+0.91)
+    #running 2min it realizes black can hold (+0.16)
+    #fixed by directly editing the evals.csv file
+    #'1r6/p4rkp/1p1PR3/1Bp5/8/B7/P2b2PP/6K1 w - - 0 1'
+
+    #maia has 50/50 chance of saving position, but feels more likely
+    #to me
+    ('1r3k2/p4r1p/1p1P4/1Bp5/8/8/PB1bR1PP/6K1 b - - 0 1','f2g5'): 2,
+
+    #maia has 22% chance of saving the position, feels more likely
+    ('rn3rk1/pp3pp1/2p2q1p/3p4/3b2N1/1Q1BP3/PP3PPP/R4RK1 b - - 0 1','f6e6'): 3,
+
+    #maia has 58% of this poisoned pawn blunder, feels less likely
+    ('1r1qkb1r/p4ppp/3pp3/2p1P3/2Pn1B2/3Q2P1/PP3PBP/R3R1K1 b k - 0 1','b8b2'): 0.25,
+
+    #maia has 50%, feels less likely
+    ('r4rk1/3PBpbp/p5p1/2q5/8/2p2P2/5P1P/1R1QR1K1 b - - 0 1','c3c2'): 0.25,
+
+    #mate in 3, maia has 55%
+    ('r4k1r/pp3ppp/n1p2n1B/2qb4/8/5B2/PPNQ1P1P/2KRR3 b - - 0 1','d5f3'): 0.1,
+
+    #maia has game-losing g7g8 at 25%
+    ('1r6/p4rkp/1p1PR3/1Bp5/8/8/PB1b2PP/6K1 b - - 0 1','g7g8'): 0.25,
+
+    #maia has game-losing Re7 at 49%
+    ('1r3k2/p2P1r1p/1p6/1Bp3b1/8/8/PB2R1PP/6K1 b - - 0 1','f7e7'): 0.3,
+
+    #both lose but maia has worse b8d8 at 82%
+    ('1r3k2/p2Pr2p/1p6/1Bp1B1b1/8/8/P3R1PP/6K1 b - - 0 1','b8d8'): 0.1,
 }
 
 #value of studying k moves out of book
@@ -548,9 +631,13 @@ def generate_position_stats():
         
         if fen in disallowed_moves:
             wts = {x:wts[x] for x in wts if x not in disallowed_moves.get(fen,[])}
-        
+
+        if fen in MISSING_MOVES:
+            wts = {**wts, **MISSING_MOVES[fen]}
+            
         for move in wts:
             wts[move] *= PROBABILITY_MULTIPLIERS.get((fen, move),1)
+            wts[move] = wts[move] ** STRENGTH
         
         best_move = evaluate_fen(fen, EVAL_TIME)[0]
         best_move_disallowed = (best_move in disallowed_moves.get(fen,[]))
